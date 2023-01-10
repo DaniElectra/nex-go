@@ -122,13 +122,14 @@ func (request *RMCRequest) Bytes() []byte {
 
 // RMCResponse represents a RMC response
 type RMCResponse struct {
-	protocolID uint8
-	customID   uint16
-	success    uint8
-	callID     uint32
-	methodID   uint32
-	data       []byte
-	errorCode  uint32
+	hppResponse bool
+	protocolID  uint8
+	customID    uint16
+	success     uint8
+	callID      uint32
+	methodID    uint32
+	data        []byte
+	errorCode   uint32
 }
 
 // CustomID returns the RMC response customID
@@ -139,6 +140,16 @@ func (response *RMCResponse) CustomID() uint16 {
 // SetCustomID sets the RMC response customID
 func (response *RMCResponse) SetCustomID(customID uint16) {
 	response.customID = customID
+}
+
+// HppResponse checks if the RMC response is an Hpp response
+func (response *RMCResponse) HppResponse() bool {
+	return response.hppResponse
+}
+
+// SetHppResponse sets the RMC response as an Hpp response or not
+func (response *RMCResponse) SetHppResponse(hppResponse bool) {
+	response.hppResponse = hppResponse
 }
 
 // SetSuccess sets the RMCResponse payload to an instance of RMCSuccess
@@ -162,10 +173,14 @@ func (response *RMCResponse) SetError(errorCode uint32) {
 func (response *RMCResponse) Bytes() []byte {
 	body := NewStreamOut(nil)
 
-	body.WriteUInt8(response.protocolID)
-	if response.protocolID == 0x7f {
-		body.WriteUInt16LE(response.customID)
+	// Hpp server responses skip the protocol ID
+	if !(response.hppResponse) {
+		body.WriteUInt8(response.protocolID)
+		if response.protocolID == 0x7f {
+			body.WriteUInt16LE(response.customID)
+		}
 	}
+
 	body.WriteUInt8(response.success)
 
 	if response.success == 1 {

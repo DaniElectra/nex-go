@@ -9,10 +9,13 @@
 package nex
 
 import (
+	"crypto/tls"
 	"fmt"
 	"math/rand"
 	"net"
+	"net/http"
 	"runtime"
+	"strconv"
 	"time"
 )
 
@@ -23,6 +26,9 @@ type Server struct {
 	genericEventHandles       map[string][]func(PacketInterface)
 	prudpV0EventHandles       map[string][]func(*PacketV0)
 	prudpV1EventHandles       map[string][]func(*PacketV1)
+	hppEventHandles           map[string][]func(*PacketHpp)
+	hppClientResponses        map[*Client](chan []byte)
+	hppServer                 bool
 	accessKey                 string
 	prudpVersion              int
 	nexVersion                int
@@ -157,6 +163,65 @@ func (server *Server) handleSocketMessage() error {
 	return nil
 }
 
+// ListenHpp starts a NEX Hpp server on a given address
+func (server *Server) ListenHpp(address, certFile, keyFile string) {
+	hppHandler := func(w http.ResponseWriter, req *http.Request) {
+		pidValue := req.Header.Get("pid")
+		accessKeySignature := req.Header.Get("signature1")
+		passwordSignature := req.Header.Get("signature2")
+
+		pid, err := strconv.Atoi(pidValue)
+		if err != nil {
+			logger.Error(fmt.Sprintf("[Hpp] Invalid PID - %s", pidValue))
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+
+		rmcRequestString := req.FormValue("file")
+
+		rmcRequestBytes := []byte(rmcRequestString)
+
+		client := NewClient(nil, server)
+		client.SetPID(uint32(pid))
+
+		server.hppClientResponses[client] = make(chan []byte)
+
+		packetHpp, _ := NewPacketHpp(client, rmcRequestBytes)
+
+		packetHpp.SetAccessKeySignature(accessKeySignature)
+		packetHpp.SetPasswordSignature(passwordSignature)
+
+		server.Emit("Data", packetHpp)
+
+		rmcResponseBytes := <- server.hppClientResponses[client]
+
+		if len(rmcResponseBytes) > 0 {
+			_, err = w.Write(rmcResponseBytes)
+			if err != nil {
+				logger.Error(err.Error())
+			}
+		}
+
+		delete(server.hppClientResponses, client)
+	}
+
+	http.HandleFunc("/hpp/", hppHandler)
+
+	hppServer := &http.Server{
+		Addr: address,
+		TLSConfig: &tls.Config{
+			MinVersion: tls.VersionTLS11,
+		},
+	}
+
+	logger.Success(fmt.Sprintf("Hpp server listening on address - %s", address))
+
+	err := hppServer.ListenAndServeTLS(certFile, keyFile)
+	if err != nil {
+		panic(err)
+	}
+}
+
 // On sets the data event handler
 func (server *Server) On(event string, handler interface{}) {
 	// Check if the handler type matches one of the allowed types, and store the handler in it's allowed property
@@ -168,6 +233,8 @@ func (server *Server) On(event string, handler interface{}) {
 		server.prudpV0EventHandles[event] = append(server.prudpV0EventHandles[event], handler)
 	case func(*PacketV1):
 		server.prudpV1EventHandles[event] = append(server.prudpV1EventHandles[event], handler)
+	case func(*PacketHpp):
+		server.hppEventHandles[event] = append(server.hppEventHandles[event], handler)
 	}
 }
 
@@ -192,6 +259,12 @@ func (server *Server) Emit(event string, packet interface{}) {
 		}
 	case *PacketV1:
 		eventName := server.prudpV1EventHandles[event]
+		for i := 0; i < len(eventName); i++ {
+			handler := eventName[i]
+			go handler(packet)
+		}
+	case *PacketHpp:
+		eventName := server.hppEventHandles[event]
 		for i := 0; i < len(eventName); i++ {
 			handler := eventName[i]
 			go handler(packet)
@@ -343,6 +416,16 @@ func (server *Server) SetPrudpVersion(prudpVersion int) {
 	server.prudpVersion = prudpVersion
 }
 
+// SetHppServer sets the server as a Hpp server
+func (server *Server) SetHppServer(setHppServer bool) {
+	server.hppServer = setHppServer
+}
+
+// IsHppServer checks if the server is a Hpp server
+func (server *Server) IsHppServer() bool {
+	return server.hppServer
+}
+
 // NexVersion returns the server NEX version
 func (server *Server) NexVersion() int {
 	return server.nexVersion
@@ -457,21 +540,27 @@ func (server *Server) FindClientFromConnectionID(rvcid uint32) *Client {
 
 // Send writes data to client
 func (server *Server) Send(packet PacketInterface) {
-	data := packet.Payload()
-	fragments := int(int16(len(data)) / server.fragmentSize)
+	if server.IsHppServer() {
+		client := packet.Sender()
+		payload := packet.Payload()
+		server.hppClientResponses[client] <- payload
+	} else {
+		data := packet.Payload()
+		fragments := int(int16(len(data)) / server.fragmentSize)
 
-	var fragmentID uint8 = 1
-	for i := 0; i <= fragments; i++ {
-		time.Sleep(time.Second / 2)
-		if int16(len(data)) < server.fragmentSize {
-			packet.SetPayload(data)
-			server.SendFragment(packet, 0)
-		} else {
-			packet.SetPayload(data[:server.fragmentSize])
-			server.SendFragment(packet, fragmentID)
+		var fragmentID uint8 = 1
+		for i := 0; i <= fragments; i++ {
+			time.Sleep(time.Second / 2)
+			if int16(len(data)) < server.fragmentSize {
+				packet.SetPayload(data)
+				server.SendFragment(packet, 0)
+			} else {
+				packet.SetPayload(data[:server.fragmentSize])
+				server.SendFragment(packet, fragmentID)
 
-			data = data[server.fragmentSize:]
-			fragmentID++
+				data = data[server.fragmentSize:]
+				fragmentID++
+			}
 		}
 	}
 }
@@ -504,6 +593,8 @@ func NewServer() *Server {
 		genericEventHandles:   make(map[string][]func(PacketInterface)),
 		prudpV0EventHandles:   make(map[string][]func(*PacketV0)),
 		prudpV1EventHandles:   make(map[string][]func(*PacketV1)),
+		hppEventHandles:       make(map[string][]func(*PacketHpp)),
+		hppClientResponses:    make(map[*Client](chan []byte)),
 		clients:               make(map[string]*Client),
 		prudpVersion:          1,
 		fragmentSize:          1300,
