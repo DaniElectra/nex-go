@@ -100,13 +100,7 @@ func (client *Client) Decipher() *rc4.Cipher {
 // UpdateAccessKey sets the client signature base and signature key
 func (client *Client) UpdateAccessKey(accessKey string) {
 	client.signatureBase = sum([]byte(accessKey))
-
-	// If we are using an Hpp server, the signature key is the access key without hashing
-	if client.server.IsHppServer() {
-		client.signatureKey = []byte(accessKey)
-	} else {
-		client.signatureKey = MD5Hash([]byte(accessKey))
-	}
+	client.signatureKey = MD5Hash([]byte(accessKey))
 }
 
 // SignatureBase returns the v0 checksum signature base

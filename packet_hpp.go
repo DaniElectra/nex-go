@@ -1,6 +1,9 @@
 package nex
 
 import (
+	"bytes"
+	"crypto/hmac"
+	"crypto/md5"
 	"encoding/hex"
 	"errors"
 )
@@ -40,6 +43,27 @@ func (packet *PacketHpp) SetPasswordSignature(passwordSignature string) {
 // PasswordSignature returns the packet password signature
 func (packet *PacketHpp) PasswordSignature() []byte {
 	return packet.passwordSignature
+}
+
+// ValidateAccessKey checks if the access key signature is valid
+func (packet *PacketHpp) ValidateAccessKey() {
+	accessKey, err := hex.DecodeString(packet.sender.server.AccessKey())
+	if err != nil {
+		logger.Error("[PacketHpp] Failed to decode access key")
+	}
+
+	calculatedAccessKeySignature := packet.calculateSignature(packet.Payload(), accessKey)
+	if !bytes.Equal(calculatedAccessKeySignature, packet.AccessKeySignature()) {
+		logger.Error("Hpp access key calculated signature did not match")
+	}
+}
+
+func (packet *PacketHpp) calculateSignature(buffer []byte, key []byte) []byte {
+	mac := hmac.New(md5.New, key)
+	mac.Write(buffer)
+	hmac := mac.Sum(nil)
+
+	return hmac
 }
 
 // NewPacketHpp returns a new Hpp packet

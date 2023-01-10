@@ -164,7 +164,7 @@ func (server *Server) handleSocketMessage() error {
 }
 
 // ListenHpp starts a NEX Hpp server on a given address
-func (server *Server) ListenHpp(address, certFile, keyFile string) {
+func (server *Server) ListenHpp(address string, certFile string, keyFile string) {
 	hppHandler := func(w http.ResponseWriter, req *http.Request) {
 		pidValue := req.Header.Get("pid")
 		accessKeySignature := req.Header.Get("signature1")
@@ -189,6 +189,8 @@ func (server *Server) ListenHpp(address, certFile, keyFile string) {
 		packetHpp, _ := NewPacketHpp(client, rmcRequestBytes)
 
 		packetHpp.SetAccessKeySignature(accessKeySignature)
+		packetHpp.ValidateAccessKey()
+
 		packetHpp.SetPasswordSignature(passwordSignature)
 
 		server.Emit("Data", packetHpp)
