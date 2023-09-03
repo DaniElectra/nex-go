@@ -10,6 +10,7 @@ package nex
 
 import (
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -127,13 +128,17 @@ func (server *Server) handleSocketMessage() error {
 		packet, err = NewPacketV1(client, data)
 	}
 
-	if err != nil {
+	if err != nil && !errors.Is(err, ErrSeenPacket) {
 		// TODO - Should this return the error too?
 		logger.Error(err.Error())
 		return nil
 	}
 
 	client.IncreasePingTimeoutTime(server.PingTimeout())
+
+	if errors.Is(err, ErrSeenPacket) {
+		return nil
+	}
 
 	if packet.HasFlag(FlagAck) || packet.HasFlag(FlagMultiAck) {
 		return nil
@@ -169,12 +174,15 @@ func (server *Server) handleSocketMessage() error {
 		server.Emit("Syn", packet)
 	case ConnectPacket:
 		packet.Sender().SetClientConnectionSignature(packet.ConnectionSignature())
+		packet.Sender().SequenceIDCounterIn().Increment()
 
 		server.Emit("Connect", packet)
 	case DataPacket:
+		packet.Sender().SequenceIDCounterIn().Increment()
 		server.Emit("Data", packet)
 	case DisconnectPacket:
 		server.Emit("Disconnect", packet)
+		client.StopTimeoutTimer()
 		server.GracefulKick(client)
 	case PingPacket:
 		//server.SendPing(client)

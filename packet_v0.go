@@ -109,6 +109,10 @@ func (packet *PacketV0) Decode() error {
 		payloadSize = uint16(len(packet.data) - int(stream.ByteOffset()) - checksumSize)
 	}
 
+	if (packet.Type() == ConnectPacket || packet.Type() == DataPacket) && (uint32(packet.SequenceID()) <= packet.Sender().SequenceIDCounterIn().Value()) {
+		return ErrSeenPacket
+	}
+
 	if payloadSize > 0 {
 		if len(packet.Data()[stream.ByteOffset():]) < int(payloadSize) {
 			return errors.New("[PRUDPv0] Packet data length less than payload length")
@@ -334,7 +338,7 @@ func NewPacketV0(client *Client, data []byte) (*PacketV0, error) {
 	if data != nil {
 		err := packetv0.Decode()
 		if err != nil {
-			return &PacketV0{}, errors.New("[PRUDPv0] Error decoding packet data: " + err.Error())
+			return &PacketV0{}, fmt.Errorf("[PRUDPv0] Error decoding packet data: %w", err)
 		}
 	}
 

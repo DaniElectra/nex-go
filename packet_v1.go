@@ -191,6 +191,10 @@ func (packet *PacketV1) Decode() error {
 		return fmt.Errorf("Failed to read PRUDPv1 options. %s", err.Error())
 	}
 
+	if (packet.Type() == ConnectPacket || packet.Type() == DataPacket) && (uint32(packet.SequenceID()) <= packet.Sender().SequenceIDCounterIn().Value()) {
+		return ErrSeenPacket
+	}
+
 	if payloadSize > 0 {
 		if len(packet.Data()[stream.ByteOffset():]) < int(payloadSize) {
 			return errors.New("Failed to read PRUDPv1 packet payload. Not enough data")
@@ -395,7 +399,7 @@ func NewPacketV1(client *Client, data []byte) (*PacketV1, error) {
 	if data != nil {
 		err := packetv1.Decode()
 		if err != nil {
-			return &PacketV1{}, fmt.Errorf("Failed to decode PRUDPv1 packet. %s", err.Error())
+			return &PacketV1{}, fmt.Errorf("Failed to decode PRUDPv1 packet. %w", err)
 		}
 	}
 

@@ -1,5 +1,7 @@
 package nex
 
+import "errors"
+
 const (
 	// SynPacket is the ID for the PRUDP Syn Packet type
 	SynPacket uint16 = 0x0
@@ -16,6 +18,8 @@ const (
 	// PingPacket is the ID for the PRUDP Ping Packet type
 	PingPacket uint16 = 0x4
 )
+
+var ErrSeenPacket error = errors.New("Packet already seen")
 
 var validTypes = map[uint16]bool{
 	SynPacket:        true,
